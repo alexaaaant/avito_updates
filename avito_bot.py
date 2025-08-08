@@ -75,16 +75,17 @@ def get_ads_from_page(driver: uc.Chrome, entry: AvitoEntry, retry_count: int = 0
 			return set()
 
 		ad_links: Set[str] = set()
+		printExample: bool = True
 		wrappers = items_list.find_all('div', attrs={"data-marker": lambda x: x and x.startswith("item-wrapper(")})
 		for wrapper in wrappers:
 			a_tag = wrapper.find('a', attrs={"data-marker": "item/link"})
 			if a_tag and a_tag.has_attr("href"):
 				raw_link = f"https://m.avito.ru{a_tag['href']}"
 				clean_link = urlparse(raw_link)._replace(query="").geturl()
+				if printExample:
+					print(f"Пример ссылки: {clean_link}")
+					printExample = False
 				ad_links.add(clean_link)
-
-		if ad_links:
-			print(f"Пример ссылки: {next(iter(ad_links))}")
 
 		return ad_links
 
