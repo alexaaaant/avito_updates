@@ -8,6 +8,7 @@ from selenium.common.exceptions import WebDriverException
 from telegram import Bot
 import undetected_chromedriver as uc
 from urllib.parse import urlparse
+from datetime import datetime
 
 # === Типизация ===
 
@@ -37,29 +38,52 @@ MAX_RETRIES: int = 3
 seen_links_by_url: Dict[str, Set[str]] = {}
 bot: Bot = Bot(token=TELEGRAM_TOKEN)
 CHAT_ID: Optional[int] = None
+# Глобальный словарь для хранения окон браузера и их URL
+window_manager: Dict[str, str] = {}  # Ключ - URL, значение - window handle
 
 # === ФУНКЦИИ ===
 
 def create_driver() -> uc.Chrome:
-	print('Создаем драйвер')
+	print(datetime.now(),'Создаем драйвер')
 	options = uc.ChromeOptions()
 	options.headless = True
 	options.add_argument("--disable-blink-features=AutomationControlled")
 	options.add_argument("--window-size=390,844")
 	options.add_argument("--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1")
-	print("Драйвер создан")
+	print(datetime.now(),"Драйвер создан")
 	return uc.Chrome(options=options)
 
 def get_ads_from_page(driver: uc.Chrome, entry: AvitoEntry, retry_count: int = 0) -> Set[str]:
 	try:
-		print(f"Передали урл в драйвер {entry['name']}")
-		driver.get(entry['url'])
+		print(datetime.now(),f"Обрабатываем URL: {entry['name']}")
+
+		# Проверяем, есть ли уже окно для этого URL
+		if entry['url'] in window_manager:
+			window_handle = window_manager[entry['url']]
+			try:
+				# Переключаемся на существующее окно
+				driver.switch_to.window(window_handle)
+				print(datetime.now(),f"Перезагружаем существующее окно для {entry['name']}")
+				driver.refresh()
+			except:
+				# Если окно было закрыто, создаем новое
+				print(datetime.now(),f"Окно было закрыто, создаем новое для {entry['name']}")
+				driver.switch_to.new_window('tab')
+				driver.get(entry['url'])
+				window_manager[entry['url']] = driver.current_window_handle
+		else:
+			# Создаем новое окно для нового URL
+			print(datetime.now(),f"Создаем новое окно для {entry['name']}")
+			driver.switch_to.new_window('tab')
+			driver.get(entry['url'])
+			window_manager[entry['url']] = driver.current_window_handle
+
 		time.sleep(5)
 		html = driver.page_source
-		print(f"Распарсили переданный урл {entry['name']}")
+		print(datetime.now(),f"Распарсили переданный урл {entry['name']}")
 
 		if "Доступ ограничен" in html or 'items/list' not in html:
-			print(f"[BLOCKED] Попытка {retry_count + 1}")
+			print(datetime.now(),f"[BLOCKED] Попытка {retry_count + 1}")
 			bot.send_message(chat_id=CHAT_ID, text=f"[BLOCKED] Попытка {retry_count + 1}")
 			if retry_count < MAX_RETRIES:
 				time.sleep(900)
@@ -69,7 +93,7 @@ def get_ads_from_page(driver: uc.Chrome, entry: AvitoEntry, retry_count: int = 0
 
 		soup = BeautifulSoup(html, 'html.parser')
 		items_list = soup.find('div', attrs={"data-marker": "items/list"})
-		print(f"Извлекли элементы {entry['name']}")
+		print(datetime.now(),f"Извлекли элементы {entry['name']}")
 
 		if not items_list:
 			return set()
@@ -83,14 +107,16 @@ def get_ads_from_page(driver: uc.Chrome, entry: AvitoEntry, retry_count: int = 0
 				raw_link = f"https://m.avito.ru{a_tag['href']}"
 				clean_link = urlparse(raw_link)._replace(query="").geturl()
 				if printExample:
-					print(f"Пример ссылки: {clean_link}")
+					print(datetime.now(),f"Пример ссылки: {clean_link}")
 					printExample = False
 				ad_links.add(clean_link)
 
 		return ad_links
 
 	except WebDriverException as e:
-		print(f"[ERROR] Selenium: {e}")
+		bot.send_message(chat_id=CHAT_ID, text="Почини меня 1")
+		print(datetime.now(),f"[ERROR] Selenium: {e}")
+		driver.quit()
 		return set()
 
 # === TELEGRAM ===
@@ -100,18 +126,18 @@ async def get_chat_id() -> None:
 	updates = await bot.get_updates()
 	if updates:
 		CHAT_ID = updates[-1].message.chat.id
-		print(f"✅ Чат ID: {CHAT_ID}")
+		print(datetime.now(),f"✅ Чат ID: {CHAT_ID}")
 	else:
-		print("❗ Отправь сообщение боту в Telegram")
+		print(datetime.now(),"❗ Отправь сообщение боту в Telegram")
 
 async def check_one_url(driver: uc.Chrome, entry: AvitoEntry) -> None:
 	current_links = get_ads_from_page(driver, entry)
 
 	if not current_links:
-		print(f"⚠️ Прогрев кэша не удался: пустой список объявлений для {entry['name']}")
+		print(datetime.now(),f"⚠️ Прогрев кэша не удался: пустой список объявлений для {entry['name']}")
 	else:
 		seen_links_by_url[entry['url']] = current_links
-		print(f"✅ Кэш прогрет для {entry['name']} — {len(current_links)} объявлений")
+		print(datetime.now(),f"✅ Кэш прогрет для {entry['name']} — {len(current_links)} объявлений")
 
 async def check_one_url_fully(driver: uc.Chrome, entry: AvitoEntry) -> None:
 	current_links = get_ads_from_page(driver, entry)
@@ -120,32 +146,31 @@ async def check_one_url_fully(driver: uc.Chrome, entry: AvitoEntry) -> None:
 	if new_links:
 		for link in new_links:
 			await bot.send_message(chat_id=CHAT_ID, text=f"🆕 Новое объявление:\n{link} ({entry['name']})")
-			print(f"📨 Новое объявление: {link} ({entry['name']})")
+			print(datetime.now(),f"📨 Новое объявление: {link} ({entry['name']})")
 		seen_links_by_url[entry['url']].update(new_links)
 	else:
-		print(f"[{entry['name']}] — без новых объявлений")
+		print(datetime.now(),f"[{entry['name']}] — без новых объявлений")
 
 async def check_new_ads(driver: uc.Chrome) -> None:
-	print("🔁 Инициализируем кэш...")
+	print(datetime.now(),"🔁 Инициализируем кэш...")
 	for entry in AVITO_URLS:
 		await check_one_url(driver, entry)
-		await asyncio.sleep(CHECK_INTERVAL)
 
-	print("🔁 Начинается цикл отслеживания...")
+	print(datetime.now(),"🔁 Начинается цикл отслеживания...")
 
 	while True:
 		try:
 			for entry in AVITO_URLS:
 				await check_one_url_fully(driver, entry)
-				await asyncio.sleep(CHECK_INTERVAL)
 		except Exception as e:
-			print("❗ Ошибка в цикле:", e)
+			bot.send_message(chat_id=CHAT_ID, text="Почини меня 2")
+			print(datetime.now(),"❗ Ошибка в цикле:", e)
 
-		await asyncio.sleep(CHECK_INTERVAL)
+		# await asyncio.sleep(CHECK_INTERVAL)
 
 async def main() -> None:
 	global CHAT_ID
-	print("🤖 Бот запускается...")
+	print(datetime.now(),"🤖 Бот запускается...")
 	driver = create_driver()
 
 	try:
@@ -155,7 +180,8 @@ async def main() -> None:
 
 		await check_new_ads(driver)
 	finally:
-		print("🛑 Завершаем работу и закрываем браузер...")
+		bot.send_message(chat_id=CHAT_ID, text="Почини меня 3")
+		print(datetime.now(),"🛑 Завершаем работу и закрываем браузер...")
 		driver.quit()
 
 if __name__ == "__main__":
