@@ -84,7 +84,6 @@ def get_ads_from_page(driver: uc.Chrome, entry: AvitoEntry, retry_count: int = 0
 
 		if "Доступ ограничен" in html or 'items/list' not in html:
 			print(datetime.now(),f"[BLOCKED] Попытка {retry_count + 1}")
-			bot.send_message(chat_id=CHAT_ID, text=f"[BLOCKED] Попытка {retry_count + 1}")
 			if retry_count < MAX_RETRIES:
 				time.sleep(900)
 				return get_ads_from_page(driver, entry, retry_count + 1)
